@@ -1,10 +1,8 @@
-```
 import os
 import sys
 import copy
 import pefile
 import struct
-import binascii
 from enum import Enum
 
 """
@@ -459,4 +457,3 @@ if __name__ == "__main__":
             print("[!] Failed {} test:".format(test_name))
         elif res == result.UNABLE_TO_PARSE:
             print("[!] Unable to parse: {}".format(test_name))
-```
