@@ -449,6 +449,7 @@ if __name__ == "__main__":
     if rich_header is None:
         print("[E] Rich header: Unable to parse: {}".format(file_name))
 
+    # Print test results
     tests = [checksum_test, duplicate_test, linker_test, import_count_test]
     for test in tests:
         test_name = test.__name__
@@ -457,3 +458,6 @@ if __name__ == "__main__":
             print("[!] Failed {} test:".format(test_name))
         elif res == result.UNABLE_TO_PARSE:
             print("[!] Unable to parse: {}".format(test_name))
+
+    # Close PE file
+    pe.close()

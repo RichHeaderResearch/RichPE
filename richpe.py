@@ -47,6 +47,9 @@ def get_richpe(file_path):
     features.append(str(pe.OPTIONAL_HEADER.MajorSubsystemVersion))
     features.append(str(pe.OPTIONAL_HEADER.MinorSubsystemVersion))
 
+    # Close PE file
+    pe.close()
+
     # Generate RichPE hash from features
     md5 = hashlib.md5()
     md5.update(" ".join(features).encode("ascii"))
