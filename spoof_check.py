@@ -428,26 +428,19 @@ if __name__ == "__main__":
 
     # Validate command line args
     if len(sys.argv) != 2:
-        print("[E] Invalid arguments")
-        sys.exit(1)
+        raise ValueError("Invalid arguments")
 
     file_path = sys.argv[1]
     if not os.path.isfile(file_path):
-        print("[E] Invalid file path: {}".format(file_path))
-        sys.exit(1)
+        raise ValueError("Invalid file path: {}".format(file_path))
 
     file_name = os.path.basename(file_path)
 
-    # Check if file_path is a valid PE file
-    try:
-        pe = pefile.PE(name=file_path)
-    except Exception:
-        print("[E] Pefile: Unable to parse: {}".format(file_name))
-
-    # Check if file has a valid Rich header
+    # Attempt to parse Rich header
+    pe = pefile.PE(name=file_path)
     rich_header = pe.parse_rich_header()
     if rich_header is None:
-        print("[E] Rich header: Unable to parse: {}".format(file_name))
+        raise ValueError("Unable to parse Rich header: {}".format(file_name))
 
     # Print test results
     tests = [checksum_test, duplicate_test, linker_test, import_count_test]

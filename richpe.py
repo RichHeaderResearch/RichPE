@@ -9,11 +9,15 @@ Usage: python3 richpe.py [file_path]
 """
 
 
-def get_richpe(file_path):
+def get_richpe(file_path=None, data=None):
 
-    # Check if file_path is a valid PE file
+    # Provide either file path or data
+    if file_path is None and data is None:
+        raise ValueError("Must provide a file path or data")
+
+    # Validate PE file
     try:
-        pe = pefile.PE(name=file_path, fast_load=True)
+        pe = pefile.PE(name=file_path, data=data, fast_load=True)
     except Exception:
         return None
 
@@ -59,13 +63,11 @@ def get_richpe(file_path):
 if __name__ == "__main__":
 
     if len(sys.argv) != 2:
-        print("[E] Invalid arguments")
-        sys.exit(1)
+        raise ValueError("Invalid arguments")
 
     file_path = sys.argv[1]
     if not os.path.isfile(file_path):
-        print("[E] Invalid file path: {}".format(file_path))
-        sys.exit(1)
+        raise ValueError("Invalid file path: {}".format(file_path))
 
     richpe = get_richpe(file_path)
     file_name = os.path.basename(file_path)
