@@ -3,11 +3,12 @@ import sys
 import copy
 import pefile
 import struct
+import argparse
 from enum import Enum
 
 """
-Usage:
-    python3 spoof_check.py [file_path]
+Checks that the metadata within a file's Rich header does not contradict the
+other metadata contained within it.
 
 References:
     https://gist.github.com/skochinsky/07c8e95e33d9429d81a75622b5d24c8b
@@ -259,8 +260,8 @@ KNOWN_PRODUCT_IDS = {
   268: "Utc1900_POGO_I_CPP",
   269: "Utc1900_POGO_O_C",
   270: "Utc1900_POGO_O_CPP"
-
 }
+
 
 class result(Enum):
     VALID = 0
@@ -269,10 +270,22 @@ class result(Enum):
 
 
 def _rol(val, num):
+    """Rotates val to the left by num bits."""
     return ((val << (num % 32)) & 0xffffffff) | (val >> (32 - (num % 32)))
 
 
 def checksum_test(pe, rich_header):
+    """Tests that the Rich header checksum is valid.
+
+    Computes what the Rich header checksum should be. If the Rich header
+    contains a different checksum value, this function returns INVALID
+    This indicates that either the Rich header or MS-DOS stub has been modified
+
+    The Rich header checksum is computed from the following:
+        Length of the MS-DOS stub
+        Contents of the MS-DOS stub, with e_lfanew zeroed out
+        Rich header @Comp.IDs and lowest 5 bits of each count
+    """
 
     # Checksum stored in Rich header
     rich_checksum = rich_header.get("checksum", None)
@@ -286,49 +299,63 @@ def checksum_test(pe, rich_header):
     mask = 0x536e6144 # DanS (little-endian)
     start_marker = struct.pack("<LLLL", rich_checksum ^ mask, rich_checksum,
                                rich_checksum, rich_checksum)
-
-    # Get index of start marker
     if not len(start_marker):
         return result.UNABLE_TO_PARSE
+
+    # Get index of start marker
     start_index = data.find(start_marker)
     if start_index == -1:
         return result.UNABLE_TO_PARSE
 
-    # Verify that length of Rich header fields is valid
+    # Get list of @Comp.IDs and counts from Rich header
+    # Elements in rich_fields at even indices are @Comp.IDs
+    # Elements in rich_fields at odd indices are counts
     rich_fields = copy.deepcopy(rich_header.get("values", None))
     if len(rich_fields) % 2 != 0:
         return result.UNABLE_TO_PARSE
 
-    # Compute what checksum should be
+    # Compute cd as MS-DOS stub portion of checksum
+    # Zero out e_lfanew from 0x3c to 0x3f
     cd = 0
     for i in range(start_index):
-        if i >= 0x3c and i < 0x40:
+        if i >= 0x3c and i <= 0x3f:
             cd += _rol(0, i)
         else:
             cd += _rol(data[i], i)
 
+    # Compute cd as Rich header portion of checksum
     cr = 0
     while len(rich_fields):
         compid = rich_fields.pop(0)
         count = rich_fields.pop(0)
         cr += _rol(compid, count & 0x1f)
 
+    # Compute checksum from MS-DOS stub start index, cd, cr
+    # Only keep lowest 32 bits
     checksum = (start_index + cd + cr) & 0xffffffff
 
-    # Compare Rich header checksum with what it should be
-    if rich_checksum != checksum:
+    # Compare computed checksum with the checksum in the Rich header
+    if checksum != rich_checksum:
         return result.INVALID
     else:
         return result.VALID
 
 
 def duplicate_test(pe, rich_header):
+    """Checks for duplicate @Comp.IDs in the Rich header.
 
-    # Verify that length of Rich header fields is valid
-    rich_fields = rich_header.get("values", None)
+    If the Rich header contains duplicate entries, returns INVALID
+    This indicates that the Rich header has been modified
+    """
+
+    # Get list of @Comp.IDs and counts from Rich header
+    # Elements in rich_fields at even indices are @Comp.IDs
+    # Elements in rich_fields at odd indices are counts
+    rich_fields = copy.deepcopy(rich_header.get("values", None))
     if len(rich_fields) % 2 != 0:
         return result.UNABLE_TO_PARSE
 
+    # Get a list of @Comp.IDs in rich_fields
     compids = []
     for i in range(len(rich_fields)):
         if i % 2 == 0:
@@ -336,25 +363,37 @@ def duplicate_test(pe, rich_header):
 
     # Check if any @Comp.IDs are duplicates
     if len(compids) != len(set(compids)):
-        return reslt.INVALID
+        return result.INVALID
 
     return result.VALID
 
 
 def linker_test(pe, rich_header):
+    """Checks that the Rich and PE header linker versions do not conflict.
 
-    # Verify that length of Rich header fields is valid
+    Certain Rich Header ProdIDs correspond to linker versions
+    Although they are undocumented, we have used prior research as well as our
+    own to determine many of them
+    There are likely more linker version ProdIDs that we have not identified
+
+    If the linker versions conflict, this function returns INVALID
+    This indicates that the Rich header or PE header has been modified
+    """
+
+    # Get list of @Comp.IDs and counts from Rich header
+    # Elements in rich_fields at even indices are @Comp.IDs
+    # Elements in rich_fields at odd indices are counts
     rich_fields = copy.deepcopy(rich_header.get("values", None))
     if len(rich_fields) % 2 != 0:
         return result.UNABLE_TO_PARSE
 
-    # Get list of ProdIDs
+    # Get list of ProdIDs from rich_fields
     prodids = []
     for i in range(len(rich_fields)):
         if i % 2 == 0:
             prodids.append(rich_fields[i] >> 16)
 
-    # Get major and minor version of linker from PE header
+    # Parse major and minor linker versions from PE header
     pe_major = pe.OPTIONAL_HEADER.MajorLinkerVersion
     pe_minor = pe.OPTIONAL_HEADER.MinorLinkerVersion
 
@@ -362,25 +401,23 @@ def linker_test(pe, rich_header):
     found_linker = False
     for prodid in prodids:
 
-        # Count how many times unknown ProdIDs occur
+        # Only interested in ProdIDs that correspond to linker versions
         if KNOWN_PRODUCT_IDS.get(prodid) is None:
             continue
-
-        # Only interested in linker ProdIDs
         prodid_name = KNOWN_PRODUCT_IDS[prodid]
         if not prodid_name.startswith("Linker"):
             continue
 
         found_linker = True
 
-        # Get major and minor version of linker according to Rich header
+        # Parse major and minor linker version from ProdID
         prodid_name = prodid_name[6:]
         if prodid_name.endswith("p"):
             prodid_name = prodid_name[:-1]
         rich_major = int(prodid_name[:-2])
         rich_minor = int(prodid_name[-2:])
 
-        # Make sure the Rich and PE linker versions match
+        # Check whether the Rich and PE linker versions match
         if pe_major == rich_major and pe_minor == rich_minor:
             return result.VALID
 
@@ -391,17 +428,29 @@ def linker_test(pe, rich_header):
 
 
 def import_count_test(pe, rich_header):
+    """Checks that import0 does not conflict with the IAT import count.
 
-    # Get number of imported Windows API functions in IAT
+    The Rich header contains a ProdID called import0
+    It is related to the number of imports in the IAT, but we are unsure how
+    It is never less than the number of imports in the IAT
+
+    If import0 is less than IAT import count, this function returns INVALID
+    This indicates that the Rich header or IAT has been modified
+    """
+
+    # Check whether the file has an IAT
     if not hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
-        return False
+        return result.UNABLE_TO_PARSE
 
+    # Get the number of imports in the IAT
     iat_count = 0
     for entry in pe.DIRECTORY_ENTRY_IMPORT:
         for imported_function in entry.imports:
             iat_count += 1
 
-    # Verify that length of Rich header fields is valid
+    # Get list of @Comp.IDs and counts from Rich header
+    # Elements in rich_fields at even indices are @Comp.IDs
+    # Elements in rich_fields at odd indices are counts
     rich_fields = copy.deepcopy(rich_header.get("values", None))
     if len(rich_fields) % 2 != 0:
         return result.INVALID
@@ -426,31 +475,62 @@ def import_count_test(pe, rich_header):
 
 if __name__ == "__main__":
 
-    # Validate command line args
-    if len(sys.argv) != 2:
-        raise ValueError("Invalid arguments")
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="PE meta tampering checker")
+    parser.add_argument("-v", "--verbose", action="store_true", default=False,
+                        help="Run in verbose mode")
+    parser.add_argument("file_paths", type=str, nargs="+",
+                        help="A list of file paths")
+    args = parser.parse_args()
 
-    file_path = sys.argv[1]
-    if not os.path.isfile(file_path):
-        raise ValueError("Invalid file path: {}".format(file_path))
+    # List of tests to identify invalid metadata
+    meta_tests = [
+        checksum_test,
+        duplicate_test,
+        linker_test,
+        import_count_test
+    ]
 
-    file_name = os.path.basename(file_path)
+    # Perform tests on each file
+    for file_path in args.file_paths:
+        if not os.path.isfile(file_path):
+            raise ValueError("Invalid file path: {}".format(file_path))
+        file_name = os.path.basename(file_path)
 
-    # Attempt to parse Rich header
-    pe = pefile.PE(name=file_path)
-    rich_header = pe.parse_rich_header()
-    if rich_header is None:
-        raise ValueError("Unable to parse Rich header: {}".format(file_name))
+        # Attempt to parse PE header
+        try:
+            pe = pefile.PE(name=file_path)
+        except pefile.PEFormatError:
+            if args.verbose:
+                print("{}\n\tUnable to parse: PE header".format(file_name))
+            continue
 
-    # Print test results
-    tests = [checksum_test, duplicate_test, linker_test, import_count_test]
-    for test in tests:
-        test_name = test.__name__
-        res = test(pe, rich_header)
-        if res == result.INVALID:
-            print("[!] Failed {} test:".format(test_name))
-        elif res == result.UNABLE_TO_PARSE:
-            print("[!] Unable to parse: {}".format(test_name))
+        # Attempt to parse Rich header:
+        rich_header = pe.parse_rich_header()
+        if rich_header is None:
+            if args.verbose:
+                print("{}\n\tUnable to parse: Rich header".format(file_name))
+            continue
 
-    # Close PE file
-    pe.close()
+        # Perform tests
+        test_results = []
+        failed_test = False
+        for meta_test in meta_tests:
+            test_name = meta_test.__name__
+            res = meta_test(pe, rich_header)
+            pe.close()
+
+            if res == result.INVALID:
+                test_results.append("\tFailed: {}".format(test_name))
+                failed_test = True
+            elif res == result.UNABLE_TO_PARSE:
+                test_results.append("\tUnable to parse: {}".format(test_name))
+
+        # Print test results
+        if failed_test or args.verbose:
+            print(file_name)
+            for test_result in test_results:
+                if test_result.startswith("\tFailed:"):
+                    print(test_result)
+                elif args.verbose:
+                    print(test_result)
