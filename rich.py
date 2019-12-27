@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-Implementation of the RichPE metadata hash.
+Implementation of the Rich header md5 hash.
 """
 
 import os
@@ -57,7 +57,7 @@ def get_rich_hash(file_path=None, data=None):
 if __name__ == "__main__":
 
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(description="RichPE hash implementation")
+    parser = argparse.ArgumentParser(description="Rich header hash implementation")
     parser.add_argument("file_paths", type=str, nargs="+",
                         help="A list of file paths")
     args = parser.parse_args()
