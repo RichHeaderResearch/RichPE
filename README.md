@@ -37,9 +37,21 @@ example: python3 spoof_check.py /path/to/file
 example: python3 spoof_check.py /path/to/directory/*
 ```
 
+## Rich header hash:
+
+Implementation of the Rich header hash to be used within yara rules (hash.md5(pe.rich_signature.clear_data)).
+
+```
+usage: python3 rich.py [any # of file paths]
+
+example: python3 rich.py /path/to/file
+
+example: python3 rich.py /path/to/directory/*
+```
+
 ## Dependencies:
 
-Both richpe.py and spoof_check.py depend upon the pefile library.
+All scripts (richpe.py, rich.py and spoof_check.py) depend upon the pefile library.
 
 ```
 pip3 install pefile
